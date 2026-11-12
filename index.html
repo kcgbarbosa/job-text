@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Job Text</title>
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #16191d; --muted: #5d6670;
+    --line: #d5dae0; --accent: #0891b2; --accent-text: #ffffff;
+    --ok: #15803d; --err-bg: #fdecec; --err: #b42318;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101316; --card: #1a1e23; --text: #eef1f4; --muted: #9aa4ae;
+      --line: #313840; --accent: #22b8d8; --accent-text: #06232b;
+      --ok: #4ade80; --err-bg: #3a1716; --err: #ffb4ab;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 17px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  main {
+    max-width: 640px; margin: 0 auto;
+    padding: 20px 16px calc(24px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  h1 { font-size: 22px; margin: 0; }
+  p.hint { margin: -8px 0 0; color: var(--muted); font-size: 15px; }
+  label { font-weight: 600; font-size: 15px; }
+  input, textarea {
+    width: 100%; font: inherit; color: inherit; background: var(--card);
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  }
+  input { font-size: 17px; }
+  input:focus, textarea:focus, button:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px; }
+  .row { display: flex; gap: 10px; }
+  button {
+    font: inherit; font-weight: 600; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--card); color: var(--text); min-height: 48px; padding: 0 18px; cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); flex: 1; }
+  button:disabled { opacity: .55; cursor: default; }
+  #copy { width: 100%; min-height: 56px; font-size: 19px; }
+  #copy.done { background: var(--ok); border-color: var(--ok); }
+  textarea { min-height: 50vh; resize: vertical; font-size: 15px; line-height: 1.5; }
+  .error { overflow-wrap: anywhere; background: var(--err-bg); color: var(--err); border-radius: 12px; padding: 12px 14px; font-size: 15px; }
+  .status { color: var(--muted); font-size: 15px; margin: 0; }
+  .status:empty { display: none; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Job Text</h1>
+  <p class="hint">Paste a LinkedIn job link to get the posting as plain text.</p>
+
+  <form id="form" novalidate>
+    <label for="link">Job link</label>
+    <input id="link" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false"
+           placeholder="https://www.linkedin.com/jobs/view/…" style="margin-top:6px">
+    <div class="row" style="margin-top:10px">
+      <button type="button" id="clear">Clear</button>
+      <button type="submit" id="get" class="primary">Get text</button>
+    </div>
+  </form>
+
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+  <div id="error" class="error" role="alert" hidden></div>
+
+  <section id="result" hidden>
+    <button type="button" id="copy" class="primary">Copy</button>
+    <label for="text" style="display:block;margin:14px 0 6px">Job text</label>
+    <textarea id="text" readonly></textarea>
+  </section>
+</main>
+
+<script src="clean.js"></script>
+<script>
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var link = $("link"), get = $("get"), copy = $("copy"), text = $("text");
+  var copiedTimer;
+
+  function showError(msg) {
+    $("error").textContent = msg;
+    $("error").hidden = !msg;
+  }
+
+  function reset() {
+    link.value = "";
+    text.value = "";
+    $("result").hidden = true;
+    $("status").textContent = "";
+    showError("");
+    link.focus();
+  }
+
+  $("clear").addEventListener("click", reset);
+
+  $("form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    showError("");
+    $("result").hidden = true;
+    var id = JobText.jobIdFrom(link.value);
+    if (!id) {
+      showError("No job number in that link. Paste a LinkedIn job link, like https://www.linkedin.com/jobs/view/4489026961/");
+      return;
+    }
+    get.disabled = true;
+    $("status").textContent = "Getting job " + id + "…";
+    try {
+      var res = await fetch("https://r.jina.ai/https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/" + id, {
+        headers: { "X-Respond-With": "markdown" }
+      });
+      if (!res.ok) throw new Error("The text service answered " + res.status + ". Try again in a minute.");
+      var out = JobText.cleanJob(await res.text());
+      if (out.length < 80) throw new Error("No posting found for job " + id + ". It may be closed or removed.");
+      text.value = out;
+      $("result").hidden = false;
+      $("status").textContent = "";
+      copy.focus();
+    } catch (err) {
+      $("status").textContent = "";
+      showError(err instanceof TypeError
+        ? "Couldn't reach the text service. Check your connection and try again."
+        : err.message);
+    } finally {
+      get.disabled = false;
+    }
+  });
+
+  async function copyText(value) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch (_) {
+      // Fallback for browsers without the async clipboard API.
+      text.focus();
+      text.select();
+      text.setSelectionRange(0, value.length);
+      var ok = document.execCommand("copy");
+      text.setSelectionRange(0, 0);
+      text.blur();
+      return ok;
+    }
+  }
+
+  copy.addEventListener("click", async function () {
+    var ok = await copyText(text.value);
+    clearTimeout(copiedTimer);
+    copy.textContent = ok ? "Copied ✓" : "Copy failed, select the text below";
+    copy.classList.toggle("done", ok);
+    copiedTimer = setTimeout(function () {
+      copy.textContent = "Copy";
+      copy.classList.remove("done");
+    }, 2000);
+  });
+</script>
+</body>
+</html>
